@@ -45,14 +45,7 @@ class GeofenceReceiver : BroadcastReceiver() {
                     "ENTER transition triggered for [$geofenceIds] $locDesc"
                 )
 
-                val pendingResult = goAsync()
-                ActionSequenceExecutor.executeEnterSequence(context) {
-                    try {
-                        pendingResult.finish()
-                    } catch (e: Exception) {
-                        // Ignore already finished receiver
-                    }
-                }
+                ActionSequenceService.startActionSequence(context)
             }
 
             Geofence.GEOFENCE_TRANSITION_EXIT -> {

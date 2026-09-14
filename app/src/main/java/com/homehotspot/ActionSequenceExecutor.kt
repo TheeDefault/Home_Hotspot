@@ -1,53 +1,18 @@
 package com.homehotspot
 
-import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
-import android.net.ConnectivityManager
-import android.net.wifi.WifiManager
-import android.os.Build
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.PowerManager
-import android.os.ResultReceiver
-import androidx.core.content.ContextCompat
-import java.lang.reflect.InvocationTargetException
-import java.lang.reflect.Method
-import java.lang.reflect.Proxy
-import java.util.concurrent.Executor
-import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Backward-compatible delegator for executing the HOME arrival action sequence.
+ * Hands off execution directly to [ActionSequenceService].
+ */
 object ActionSequenceExecutor {
-    private val isExecuting = AtomicBoolean(false)
-
-    @SuppressLint("WakelockTimeout")
     fun executeEnterSequence(context: Context, onComplete: () -> Unit = {}) {
-        if (!isExecuting.compareAndSet(false, true)) {
-            LogManager.log(
-                "ACTION_SEQUENCE_SKIPPED",
-                LogStatus.INFO,
-                "Action sequence already in progress, ignoring concurrent trigger"
-            )
-            onComplete()
-            return
-        }
+        ActionSequenceService.startActionSequence(context)
+        onComplete()
+    }
+}
 
-        Thread {
-            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            val wakeLock = powerManager?.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "HomeHotspot:ActionSequenceWakeLock"
-            )?.apply {
-                try {
-                    acquire(15_000L) // 15 seconds max safety timeout
-                } catch (e: Exception) {
-                    LogManager.log("WAKELOCK", LogStatus.FAILED, "Could not acquire CPU WakeLock: ${e.message}")
-                }
-            }
-
-            try {
-                LogManager.log(
                     "ACTION_SEQUENCE_STARTED",
                     LogStatus.INFO,
                     "ENTER sequence initiated: Executing 3-step action sequence with 1s delays"

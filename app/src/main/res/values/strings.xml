@@ -15,4 +15,10 @@
     <string name="clear_logs">Clear Logs</string>
     <string name="notification_channel_name">Home Hotspot Alerts</string>
     <string name="notification_channel_desc">Notifications for monitoring and geofence events</string>
+    <string name="accessibility_section_title">ACCESSIBILITY AUTOMATION</string>
+    <string name="accessibility_status_enabled">Accessibility Automation: Enabled</string>
+    <string name="accessibility_status_disabled">Accessibility Automation: Disabled (Hotspot automation unavailable)</string>
+    <string name="btn_enable_accessibility">OPEN ACCESSIBILITY SETTINGS</string>
+    <string name="btn_test_action_sequence">TEST ACTION SEQUENCE NOW</string>
+    <string name="accessibility_service_desc">Automates toggling the mobile Wi-Fi hotspot when returning home.</string>
 </resources>

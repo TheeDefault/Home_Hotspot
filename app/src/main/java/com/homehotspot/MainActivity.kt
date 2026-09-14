@@ -1,10 +1,12 @@
 package com.homehotspot
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -25,6 +27,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnMonitor: MaterialButton
     private lateinit var btnMonitor10s: MaterialButton
     private lateinit var btnStopMonitoring: MaterialButton
+    private lateinit var tvAccessibilityStatus: TextView
+    private lateinit var btnOpenAccessibility: MaterialButton
+    private lateinit var btnTestSequence: MaterialButton
     private lateinit var btnClearLogs: MaterialButton
     private lateinit var rvLogs: RecyclerView
 
@@ -110,6 +115,9 @@ class MainActivity : AppCompatActivity() {
         btnMonitor = findViewById(R.id.btnMonitor)
         btnMonitor10s = findViewById(R.id.btnMonitor10s)
         btnStopMonitoring = findViewById(R.id.btnStopMonitoring)
+        tvAccessibilityStatus = findViewById(R.id.tvAccessibilityStatus)
+        btnOpenAccessibility = findViewById(R.id.btnOpenAccessibility)
+        btnTestSequence = findViewById(R.id.btnTestSequence)
         btnClearLogs = findViewById(R.id.btnClearLogs)
         rvLogs = findViewById(R.id.rvLogs)
 
@@ -155,8 +163,38 @@ class MainActivity : AppCompatActivity() {
             MonitoringManager.stopMonitoring(this)
         }
 
+        btnOpenAccessibility.setOnClickListener {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+        }
+
+        btnTestSequence.setOnClickListener {
+            LogManager.log("TEST_SEQUENCE", LogStatus.INFO, "Manually initiated test action sequence")
+            ActionSequenceService.startActionSequence(this)
+        }
+
         btnClearLogs.setOnClickListener {
             LogManager.clearLogs()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateAccessibilityUI()
+    }
+
+    private fun updateAccessibilityUI() {
+        val isServiceRunning = HotspotAccessibilityService.isRunning()
+        if (isServiceRunning) {
+            tvAccessibilityStatus.text = getString(R.string.accessibility_status_enabled)
+            tvAccessibilityStatus.setTextColor(ContextCompat.getColor(this, R.color.status_monitoring))
+            btnOpenAccessibility.text = getString(R.string.accessibility_section_title)
+        } else {
+            tvAccessibilityStatus.text = getString(R.string.accessibility_status_disabled)
+            tvAccessibilityStatus.setTextColor(ContextCompat.getColor(this, R.color.status_error))
+            btnOpenAccessibility.text = getString(R.string.btn_enable_accessibility)
         }
     }
 
