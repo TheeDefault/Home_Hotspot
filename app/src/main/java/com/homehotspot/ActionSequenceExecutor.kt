@@ -6,9 +6,11 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.ResultReceiver
 import androidx.core.content.ContextCompat
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
@@ -18,34 +20,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 object ActionSequenceExecutor {
     private val isExecuting = AtomicBoolean(false)
-    private var lastExecutionTime: Long = 0
-    private const val DEBOUNCE_INTERVAL_MS = 60_000L // 1 minute cooldown to prevent duplicate rapid triggers
 
     @SuppressLint("WakelockTimeout")
     fun executeEnterSequence(context: Context, onComplete: () -> Unit = {}) {
-        val now = System.currentTimeMillis()
-        if (now - lastExecutionTime < DEBOUNCE_INTERVAL_MS && lastExecutionTime > 0) {
-            val remainingSec = (DEBOUNCE_INTERVAL_MS - (now - lastExecutionTime)) / 1000
-            LogManager.log(
-                "ACTION_SEQUENCE_SKIPPED",
-                LogStatus.INFO,
-                "Action sequence skipped: Debounce cooldown active ($remainingSec s remaining)"
-            )
-            onComplete()
-            return
-        }
-
         if (!isExecuting.compareAndSet(false, true)) {
             LogManager.log(
                 "ACTION_SEQUENCE_SKIPPED",
                 LogStatus.INFO,
-                "Action sequence already in progress, ignoring duplicate trigger"
+                "Action sequence already in progress, ignoring concurrent trigger"
             )
             onComplete()
             return
         }
-
-        lastExecutionTime = now
 
         Thread {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -204,7 +190,7 @@ object ActionSequenceExecutor {
 
     /**
      * Attempts to enable normal mobile Wi-Fi hotspot / tethering for internet sharing.
-     * Uses the best legitimate Android APIs and logs exact outcomes or platform security restrictions.
+     * Uses the best legitimate Android APIs with concrete callbacks and logs exact outcomes.
      */
     private fun attemptTurnOnNormalHotspot(context: Context) {
         LogManager.log(
@@ -213,20 +199,26 @@ object ActionSequenceExecutor {
             "Attempting to enable normal mobile Wi-Fi hotspot (internet-sharing tethering)..."
         )
 
-        // Method 1: ConnectivityManager / TetheringManager startTethering API
+        // Method 1: Internal IConnectivityManager service with concrete ResultReceiver
         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         if (connectivityManager != null) {
-            val tetheringHandled = tryStartConnectivityTethering(context, connectivityManager)
-            if (tetheringHandled) {
+            val serviceSuccess = tryStartTetheringViaInternalService(context, connectivityManager)
+            if (serviceSuccess) {
+                return
+            }
+
+            // Method 2: ConnectivityManager / TetheringManager startTethering reflection
+            val reflectionSuccess = tryStartConnectivityTethering(context, connectivityManager)
+            if (reflectionSuccess) {
                 return
             }
         }
 
-        // Method 2: Legacy WifiManager.setWifiApEnabled reflection (older Android / custom ROMs)
+        // Method 3: Legacy WifiManager.setWifiApEnabled reflection (older Android / custom ROMs)
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         if (wifiManager != null) {
-            val apHandled = trySetWifiApEnabled(wifiManager)
-            if (apHandled) {
+            val apSuccess = trySetWifiApEnabled(wifiManager)
+            if (apSuccess) {
                 return
             }
         }
@@ -238,6 +230,104 @@ object ActionSequenceExecutor {
         )
     }
 
+    /**
+     * Calls IConnectivityManager.startTethering directly via mService on ConnectivityManager.
+     * Passes a concrete ResultReceiver so no hidden abstract class instantiation is required.
+     */
+    private fun tryStartTetheringViaInternalService(context: Context, connectivityManager: ConnectivityManager): Boolean {
+        return try {
+            val cmClass = connectivityManager.javaClass
+            val mServiceField = try {
+                cmClass.getDeclaredField("mService")
+            } catch (e: NoSuchFieldException) {
+                null
+            } ?: return false
+
+            mServiceField.isAccessible = true
+            val iConnectivityManager = mServiceField.get(connectivityManager) ?: return false
+
+            val receiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                    if (resultCode == 0) { // 0 = TETHER_ERROR_NO_ERROR
+                        LogManager.log(
+                            "NORMAL_HOTSPOT",
+                            LogStatus.SUCCESS,
+                            "Normal mobile Wi-Fi hotspot (internet-sharing tethering) started successfully"
+                        )
+                        NotificationHelper.showNotification(
+                            context,
+                            "Mobile Hotspot Active",
+                            "Normal Wi-Fi tethering enabled: Internet sharing is ON",
+                            isEvent = true
+                        )
+                    } else {
+                        LogManager.log(
+                            "NORMAL_HOTSPOT",
+                            LogStatus.FAILED,
+                            "Normal Wi-Fi tethering failed with result code: $resultCode"
+                        )
+                    }
+                }
+            }
+
+            val TETHERING_WIFI = 0
+            val serviceClass = iConnectivityManager.javaClass
+            val methods = serviceClass.declaredMethods
+            val startTetheringMethod = methods.find { it.name == "startTethering" } ?: return false
+            startTetheringMethod.isAccessible = true
+
+            val paramTypes = startTetheringMethod.parameterTypes
+            val args = arrayOfNulls<Any>(paramTypes.size)
+
+            for (i in paramTypes.indices) {
+                when {
+                    paramTypes[i] == Int::class.javaPrimitiveType || paramTypes[i] == java.lang.Integer::class.java -> args[i] = TETHERING_WIFI
+                    paramTypes[i] == ResultReceiver::class.java -> args[i] = receiver
+                    paramTypes[i] == Boolean::class.javaPrimitiveType || paramTypes[i] == java.lang.Boolean::class.java -> args[i] = true
+                    paramTypes[i] == String::class.java -> args[i] = context.packageName
+                    else -> args[i] = null
+                }
+            }
+
+            startTetheringMethod.invoke(iConnectivityManager, *args)
+            LogManager.log(
+                "NORMAL_HOTSPOT",
+                LogStatus.INFO,
+                "Dispatched startTethering request to IConnectivityManager"
+            )
+            true
+        } catch (e: InvocationTargetException) {
+            val target = e.targetException ?: e
+            if (target is SecurityException) {
+                LogManager.log(
+                    "NORMAL_HOTSPOT",
+                    LogStatus.UNAVAILABLE,
+                    "Security restriction: Programmatic mobile hotspot requires TETHER_PRIVILEGED system permission on Android ${Build.VERSION.SDK_INT} (${target.message})"
+                )
+            } else {
+                LogManager.log(
+                    "NORMAL_HOTSPOT",
+                    LogStatus.FAILED,
+                    "Failed to start mobile hotspot via IConnectivityManager: ${target.message}"
+                )
+            }
+            true
+        } catch (e: SecurityException) {
+            LogManager.log(
+                "NORMAL_HOTSPOT",
+                LogStatus.UNAVAILABLE,
+                "Security restriction: Programmatic mobile hotspot requires TETHER_PRIVILEGED system permission on Android ${Build.VERSION.SDK_INT} (${e.message})"
+            )
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Calls ConnectivityManager.startTethering using reflection.
+     * Always provides a non-null callback to prevent "onStartTethering callback cannot be null".
+     */
     private fun tryStartConnectivityTethering(context: Context, connectivityManager: ConnectivityManager): Boolean {
         return try {
             val cmClass = connectivityManager.javaClass
@@ -252,35 +342,49 @@ object ActionSequenceExecutor {
             }
 
             var callbackInstance: Any? = null
-            if (callbackClass != null && callbackClass.isInterface) {
-                callbackInstance = Proxy.newProxyInstance(
-                    callbackClass.classLoader,
-                    arrayOf(callbackClass)
-                ) { _, method, args ->
-                    when (method.name) {
-                        "onTetheringStarted" -> {
-                            LogManager.log(
-                                "NORMAL_HOTSPOT",
-                                LogStatus.SUCCESS,
-                                "Normal mobile Wi-Fi hotspot (internet-sharing tethering) started successfully"
-                            )
-                            NotificationHelper.showNotification(
-                                context,
-                                "Mobile Hotspot Active",
-                                "Normal Wi-Fi tethering enabled: Internet sharing is ON",
-                                isEvent = true
-                            )
+            if (callbackClass != null) {
+                callbackInstance = if (callbackClass.isInterface) {
+                    Proxy.newProxyInstance(
+                        callbackClass.classLoader,
+                        arrayOf(callbackClass)
+                    ) { _, method, args ->
+                        when (method.name) {
+                            "onTetheringStarted" -> {
+                                LogManager.log(
+                                    "NORMAL_HOTSPOT",
+                                    LogStatus.SUCCESS,
+                                    "Normal mobile Wi-Fi hotspot (internet-sharing tethering) started successfully"
+                                )
+                                NotificationHelper.showNotification(
+                                    context,
+                                    "Mobile Hotspot Active",
+                                    "Normal Wi-Fi tethering enabled: Internet sharing is ON",
+                                    isEvent = true
+                                )
+                            }
+                            "onTetheringFailed" -> {
+                                val errorCode = args?.firstOrNull() ?: "UNKNOWN"
+                                LogManager.log(
+                                    "NORMAL_HOTSPOT",
+                                    LogStatus.FAILED,
+                                    "Normal Wi-Fi tethering failed with error code: $errorCode"
+                                )
+                            }
                         }
-                        "onTetheringFailed" -> {
-                            val errorCode = args?.firstOrNull() ?: "UNKNOWN"
-                            LogManager.log(
-                                "NORMAL_HOTSPOT",
-                                LogStatus.FAILED,
-                                "Normal Wi-Fi tethering failed with error code: $errorCode"
-                            )
-                        }
+                        null
                     }
-                    null
+                } else {
+                    // For abstract callback class, allocate instance via sun.misc.Unsafe to guarantee non-null argument
+                    try {
+                        val unsafeClass = Class.forName("sun.misc.Unsafe")
+                        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe")
+                        theUnsafeField.isAccessible = true
+                        val unsafe = theUnsafeField.get(null)
+                        val allocateInstanceMethod = unsafeClass.getMethod("allocateInstance", Class::class.java)
+                        allocateInstanceMethod.invoke(unsafe, callbackClass)
+                    } catch (e: Exception) {
+                        null
+                    }
                 }
             }
 
@@ -295,9 +399,16 @@ object ActionSequenceExecutor {
                     paramTypes[i] == Boolean::class.javaPrimitiveType || paramTypes[i] == java.lang.Boolean::class.java -> args[i] = true
                     paramTypes[i] == Handler::class.java -> args[i] = mainHandler
                     paramTypes[i] == Executor::class.java -> args[i] = executor
-                    callbackClass != null && paramTypes[i].isAssignableFrom(callbackClass) -> args[i] = callbackInstance
+                    callbackClass != null && paramTypes[i].isAssignableFrom(callbackClass) -> {
+                        args[i] = callbackInstance
+                    }
                     else -> args[i] = null
                 }
+            }
+
+            // If callback is still null for a required callback parameter, do not invoke startTethering with null
+            if (callbackClass != null && args.contains(null) && paramTypes.any { it == callbackClass && args[paramTypes.indexOf(it)] == null }) {
+                return false
             }
 
             startTetheringMethod.invoke(connectivityManager, *args)
