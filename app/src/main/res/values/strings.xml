@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">Home Hotspot</string>
+    <string name="dashboard_title">DASHBOARD</string>
+    <string name="home_section_title">HOME</string>
+    <string name="home_location_label">Location: %1$s</string>
+    <string name="location_not_set">Not set</string>
+    <string name="fetch_current_location">FETCH CURRENT LOCATION</string>
+    <string name="radius_label">Radius: %1$d m</string>
+    <string name="status_section_title">STATUS</string>
+    <string name="status_label">Status: %1$s</string>
+    <string name="btn_monitor">MONITOR</string>
+    <string name="btn_monitor_10s">MONITOR IN 10 SECONDS</string>
+    <string name="btn_stop_monitoring">STOP MONITORING</string>
+    <string name="activity_log_title">ACTIVITY LOG</string>
+    <string name="clear_logs">Clear Logs</string>
+    <string name="notification_channel_name">Home Hotspot Alerts</string>
+    <string name="notification_channel_desc">Notifications for monitoring and geofence events</string>
+</resources>

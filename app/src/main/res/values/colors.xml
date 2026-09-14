@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#1E88E5</color>
+    <color name="primary_dark">#1565C0</color>
+    <color name="accent">#00ACC1</color>
+    <color name="background">#121212</color>
+    <color name="surface">#1E1E1E</color>
+    <color name="card_surface">#252525</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0BEC5</color>
+    <color name="status_not_monitoring">#9E9E9E</color>
+    <color name="status_starting">#FFB300</color>
+    <color name="status_monitoring">#43A047</color>
+    <color name="status_stopping">#FB8C00</color>
+    <color name="status_error">#E53935</color>
+
+    <color name="log_info">#42A5F5</color>
+    <color name="log_success">#66BB6A</color>
+    <color name="log_failed">#EF5350</color>
+    <color name="log_unavailable">#FFA726</color>
+</resources>
